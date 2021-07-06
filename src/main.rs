@@ -4,8 +4,8 @@ use std::time::Instant;
 // TODO: brute force
 use cargo_bot_simulator::{CbInterpret, FinishState};
 fn main() {
-    //let mut cb = CbInterpret::new("qdq>qdq1", "y,n,n,n,n", "n,n,n,n,y").unwrap();
-    let mut cb = CbInterpret::new("qdq>q<qdq1", "y,n,n,n,n", "n,n,n,n,y").unwrap();
+    let mut cb = CbInterpret::<5>::new("qdq>qdq1", "y,n,n,n,n", "n,n,n,n,y").unwrap();
+    //let mut cb = CbInterpret::<5>::new("qdq>q<qdq1", "y,n,n,n,n", "n,n,n,n,y").unwrap();
 
     println!("{}", cb.print_crane());
     println!("{}", cb.print_data());

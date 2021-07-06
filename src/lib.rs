@@ -101,9 +101,9 @@ pub mod cargo_bot_parse {
     }
 
     #[derive(Debug)]
-    pub struct CbInterpret {
-        pub data: Vec<[Box; 6]>,
-        finish_state: Vec<[Box; 6]>,
+    pub struct CbInterpret<const WIDTH: usize> {
+        pub data: [u32; WIDTH],
+        finish_state: [u32; WIDTH],
         instructions: [u64; 4], //Encoded as 6 bits per Instruction
         ip: (u8, u8),           //band, position
         stack: Vec<(u8, u8)>,
@@ -117,7 +117,7 @@ pub mod cargo_bot_parse {
         Crashed,
         Finished,
     }
-    
+
     #[derive(PartialEq)]
     pub enum FinishState {
         Crashed(u16),
@@ -125,12 +125,12 @@ pub mod cargo_bot_parse {
         Limited(u16),
     }
 
-    impl CbInterpret {
+    impl<const WIDTH: usize> CbInterpret<WIDTH> {
         pub fn new<S1, S2, S3>(
             instructions_enc: S1,
             data_enc: S2,
             finish_data_enc: S3,
-        ) -> Result<CbInterpret, String>
+        ) -> Result<CbInterpret<WIDTH>, String>
         where
             S1: Into<String>,
             S2: Into<String>,
@@ -142,70 +142,93 @@ pub mod cargo_bot_parse {
                 // println!("parsing {}", rows);
                 for chars in rows.chars().collect::<Vec<char>>().chunks(2) {
                     instructions[op] |= (((match chars[1] {
-                                '>' => OpCode::Right,
-                                '<' => OpCode::Left,
-                                'd' => OpCode::Down,
-                                '1' => OpCode::Goto1,
-                                '2' => OpCode::Goto2,
-                                '3' => OpCode::Goto3,
-                                '4' => OpCode::Goto4,
-                                _ => return Err("unknown opCode".to_string()),
-                            } as u8)
-                                | (match chars[0] {
-                                    'q' => IfColor::Always,
-                                    'a' => IfColor::Any,
-                                    'b' => IfColor::Blue,
-                                    'g' => IfColor::Green,
-                                    'y' => IfColor::Yellow,
-                                    'r' => IfColor::Red,
-                                    'n' => IfColor::None,
-                                    _ => return Err("unknown color".to_string()),
+                        '>' => OpCode::Right,
+                        '<' => OpCode::Left,
+                        'd' => OpCode::Down,
+                        '1' => OpCode::Goto1,
+                        '2' => OpCode::Goto2,
+                        '3' => OpCode::Goto3,
+                        '4' => OpCode::Goto4,
+                        _ => return Err("unknown opCode".to_string()),
+                    } as u8)
+                        | (match chars[0] {
+                            'q' => IfColor::Always,
+                            'a' => IfColor::Any,
+                            'b' => IfColor::Blue,
+                            'g' => IfColor::Green,
+                            'y' => IfColor::Yellow,
+                            'r' => IfColor::Red,
+                            'n' => IfColor::None,
+                            _ => return Err("unknown color".to_string()),
                         } as u8)) as u64)
-                        .shl(((ip.1) * 6) as u64);// << doesn't work for some reason...
+                        .shl(((ip.1) * 6) as u64); // << doesn't work for some reason...
 
                     ip.1 += 1;
                 }
             }
-            let mut data = Vec::new();
-            for stacks in data_enc.into().split(',') {
-                let stack: Vec<Box> = stacks
-                    .chars()
-                    .map(|char| match char {
-                        'r' => Box::Red,
-                        'g' => Box::Green,
-                        'b' => Box::Blue,
-                        'y' => Box::Yellow,
-                        'n' => Box::None,
-                        _ => Box::None,
-                    })
-                    .collect();
-                let mut stack_b = [Box::default(); 6];
-                //stack_b[..].clone_from_slice(&stack[..]);
-                for i in 0..min(6, stack.len()) {
-                    stack_b[i] = stack[i];
-                }
-                data.push(stack_b);
-            }
-            let mut finish_state = Vec::new();
-            for stacks in finish_data_enc.into().split(',') {
-                let stack: Vec<Box> = stacks
-                    .chars()
-                    .map(|char| match char {
-                        'r' => Box::Red,
-                        'g' => Box::Green,
-                        'b' => Box::Blue,
-                        'y' => Box::Yellow,
-                        'n' => Box::None,
-                        _ => Box::None,
-                    })
-                    .collect();
-                let mut stack_b = [Box::default(); 6];
-                //stack_b[..].clone_from_slice(&stack[..]);
-                for i in 0..min(6, stack.len()) {
-                    stack_b[i] = stack[i];
-                }
-                finish_state.push(stack_b);
-            }
+            let mut data = [0; WIDTH];
+            let d: Vec<_> = data_enc
+                .into()
+                .split(',')
+                .map(|stack| {
+                    stack
+                        .chars()
+                        .map(|char| match char {
+                            'r' => Box::Red,
+                            'g' => Box::Green,
+                            'b' => Box::Blue,
+                            'y' => Box::Yellow,
+                            'n' => Box::None,
+                            _ => Box::None,
+                        } as u8)
+                        .enumerate()
+                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 6))
+                })
+                .collect();
+            data[..WIDTH].clone_from_slice(&d[..WIDTH]);
+
+            let mut finish_state = [0; WIDTH];
+            let d: Vec<_> = finish_data_enc
+                .into()
+                .split(',')
+                .map(|stack| {
+                    stack
+                        .chars()
+                        .map(|char| match char {
+                            'r' => Box::Red,
+                            'g' => Box::Green,
+                            'b' => Box::Blue,
+                            'y' => Box::Yellow,
+                            'n' => Box::None,
+                            _ => Box::None,
+                        } as u8)
+                        .enumerate()
+                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 6))
+                })
+                .collect();
+            
+            finish_state[..WIDTH].clone_from_slice(&d[..WIDTH]);
+
+            // let mut finish_state = Vec::new();
+            // for stacks in finish_data_enc.into().split(',') {
+            //     let stack: Vec<Box> = stacks
+            //         .chars()
+            //         .map(|char| match char {
+            //             'r' => Box::Red,
+            //             'g' => Box::Green,
+            //             'b' => Box::Blue,
+            //             'y' => Box::Yellow,
+            //             'n' => Box::None,
+            //             _ => Box::None,
+            //         })
+            //         .collect();
+            //     let mut stack_b = [Box::default(); 6];
+            //     //stack_b[..].clone_from_slice(&stack[..]);
+            //     for i in 0..min(6, stack.len()) {
+            //         stack_b[i] = stack[i];
+            //     }
+            //     finish_state.push(stack_b);
+            // }
             Ok(CbInterpret {
                 data,
                 finish_state,
@@ -232,15 +255,8 @@ pub mod cargo_bot_parse {
             }
         }
 
-        fn get_top(stack: &[Box; 6]) -> usize {
-            for i in 0..6 {
-                let i = 5 - i;
-                if stack[i] != Box::None {
-                    // println!("Box found at: {}", i);
-                    return i;
-                }
-            }
-            0
+        fn get_top(stack: u32) -> usize {
+            (6 - stack.leading_zeros() / 3) as usize
         }
 
         pub fn step(&mut self) -> StepState {
@@ -265,8 +281,12 @@ pub mod cargo_bot_parse {
                     OpCode::Down => {
                         // println!("going down");
                         self.ip.1 += 1;
-                        let top = CbInterpret::get_top(&self.data[self.dp as usize]);
-                        mem::swap(&mut self.crane, &mut self.data[self.dp as usize][top]);
+                        let top = CbInterpret::<WIDTH>::get_top(self.data[self.dp as usize]);
+                        // TODO: this needs to be made more boosted!
+                        let temp = ((self.data[self.dp as usize] >> (top * 3)) & 0b111) as u8;
+                        self.data[self.dp as usize] &= u32::MAX ^ 0b111 << (top * 3);
+                        self.data[self.dp as usize] |= (self.crane as u32) << (top * 3);
+                        self.crane = FromPrimitive::from_u8(temp).unwrap();
                     }
                     OpCode::Goto1 => {
                         self.stack.push(self.ip);
@@ -294,15 +314,9 @@ pub mod cargo_bot_parse {
                 }
             }
             // test if finished by comparing each element of data to finish_state
-            if self
-                .data
-                .iter_mut()
-                .zip(self.finish_state.iter_mut())
-                .all(|(d, f)| d.iter_mut().zip(f).all(|(d, f)| d == f))
-            {
+            if self.data == self.finish_state {
                 StepState::Finished
-            } else 
-            if self.dp < self.data.len() as u8 {
+            } else if self.dp < self.data.len() as u8 {
                 StepState::Normal
             } else {
                 StepState::Crashed
@@ -322,7 +336,7 @@ pub mod cargo_bot_parse {
             let mut data: String = Default::default();
             for y in (0..6).rev() {
                 for x in 0..self.data.len() {
-                    data = format!("{}|{}", data, self.data[x][y]);
+                    // data = format!("{}|{}", data, self.data[x][y]);
                 }
                 data = format!("{}|\n", data);
             }
@@ -330,7 +344,7 @@ pub mod cargo_bot_parse {
         }
     }
 
-    impl Iterator for CbInterpret {
+    impl<const WIDTH: usize> Iterator for CbInterpret<WIDTH> {
         type Item = bool;
 
         #[inline]
