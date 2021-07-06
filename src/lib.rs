@@ -1,6 +1,7 @@
 pub mod cargo_bot_parse {
     use std::fmt::Display;
     use std::mem;
+    use std::ops::Shl;
     use std::{cmp::min, fmt::Debug};
 
     use num_derive::FromPrimitive;
@@ -8,6 +9,7 @@ pub mod cargo_bot_parse {
 
     #[derive(FromPrimitive)]
     pub enum IfColor {
+        Nop = 0,
         Always = 8,
         Blue = 16,
         Green = 24,
@@ -27,20 +29,21 @@ pub mod cargo_bot_parse {
                 IfColor::Yellow => write!(f, "y"),
                 IfColor::Any => write!(f, "y"),
                 IfColor::None => write!(f, "n"),
+                IfColor::Nop => write!(f, "N"),
             }
         }
     }
 
     #[derive(FromPrimitive)]
     pub enum OpCode {
-        Right = 0,
-        Left = 1,
-        Down = 2,
-        Goto1 = 3,
-        Goto2 = 4,
-        Goto3 = 5,
-        Goto4 = 6,
-        Nop = 7,
+        Nop = 0,
+        Right = 1,
+        Left = 2,
+        Down = 3,
+        Goto1 = 4,
+        Goto2 = 5,
+        Goto3 = 6,
+        Goto4 = 7,
     }
 
     impl Display for OpCode {
@@ -101,8 +104,8 @@ pub mod cargo_bot_parse {
     pub struct CbInterpret {
         pub data: Vec<[Box; 6]>,
         finish_state: Vec<[Box; 6]>,
-        instructions: [Vec<u8>; 4],
-        ip: (u8, u8), //band, position
+        instructions: [u64; 4], //Encoded as 6 bits per Instruction
+        ip: (u8, u8),           //band, position
         stack: Vec<(u8, u8)>,
         dp: u8,
         crane: Box,
@@ -133,14 +136,12 @@ pub mod cargo_bot_parse {
             S2: Into<String>,
             S3: Into<String>,
         {
-            let mut instructions: [Vec<u8>; 4] = Default::default();
+            let mut instructions: [u64; 4] = Default::default();
             let mut ip = (0, 0);
-            for rows in instructions_enc.into().split(',') {
+            for (op, rows) in instructions_enc.into().split(',').enumerate() {
                 // println!("parsing {}", rows);
                 for chars in rows.chars().collect::<Vec<char>>().chunks(2) {
-                    instructions[ip.0].push(
-                        FromPrimitive::from_u8(
-                            (match chars[1] {
+                    instructions[op] |= (((match chars[1] {
                                 '>' => OpCode::Right,
                                 '<' => OpCode::Left,
                                 'd' => OpCode::Down,
@@ -159,12 +160,11 @@ pub mod cargo_bot_parse {
                                     'r' => IfColor::Red,
                                     'n' => IfColor::None,
                                     _ => return Err("unknown color".to_string()),
-                                } as u8),
-                        )
-                        .unwrap(),
-                    );
+                        } as u8)) as u64)
+                        .shl(((ip.1) * 6) as u64);// << doesn't work for some reason...
+
+                    ip.1 += 1;
                 }
-                ip.0 += 1;
             }
             let mut data = Vec::new();
             for stacks in data_enc.into().split(',') {
@@ -244,13 +244,13 @@ pub mod cargo_bot_parse {
         }
 
         pub fn step(&mut self) -> StepState {
-            let col = self.instructions[self.ip.0 as usize][self.ip.1 as usize] & 56;
+            let col = ((self.instructions[(self.ip.0) as usize] >> ((self.ip.1) * 6)) & 56) as u8;
             if col == self.crane as u8
                 || col == IfColor::Always as u8
                 || (col == IfColor::Any as u8 && self.crane != Box::None)
             {
                 match FromPrimitive::from_u8(
-                    self.instructions[self.ip.0 as usize][self.ip.1 as usize] & 7,
+                    ((self.instructions[(self.ip.0) as usize] >> ((self.ip.1) * 6)) & 7) as u8,
                 )
                 .expect("unknown Instruction")
                 {
@@ -284,7 +284,13 @@ pub mod cargo_bot_parse {
                         self.stack.push(self.ip);
                         self.ip = (3, 0)
                     }
-                    OpCode::Nop => todo!(),
+                    OpCode::Nop => {
+                        if !self.stack.is_empty() {
+                            self.ip = self.stack.pop().unwrap();
+                        } else {
+                            return StepState::Crashed;
+                        }
+                    }
                 }
             }
             // test if finished by comparing each element of data to finish_state
@@ -295,14 +301,8 @@ pub mod cargo_bot_parse {
                 .all(|(d, f)| d.iter_mut().zip(f).all(|(d, f)| d == f))
             {
                 StepState::Finished
-            } else if self.ip.1 >= self.instructions[self.ip.0 as usize].len() as u8 {
-                if !self.stack.is_empty() {
-                    self.ip = self.stack.pop().unwrap();
-                    StepState::Normal
-                } else {
-                    StepState::Crashed
-                }
-            } else if self.dp < self.data.len() as u8 {
+            } else 
+            if self.dp < self.data.len() as u8 {
                 StepState::Normal
             } else {
                 StepState::Crashed
@@ -345,3 +345,4 @@ pub mod cargo_bot_parse {
 
 pub use cargo_bot_parse::CbInterpret;
 pub use cargo_bot_parse::FinishState;
+pub use cargo_bot_parse::StepState;
