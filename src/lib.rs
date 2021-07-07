@@ -1,13 +1,13 @@
 pub mod cargo_bot_parse {
+    use std::fmt::Debug;
     use std::fmt::Display;
-    use std::mem;
+    use std::io::{stdout, Write};
     use std::ops::Shl;
-    use std::{cmp::min, fmt::Debug};
 
     use num_derive::FromPrimitive;
     use num_traits::FromPrimitive;
 
-    #[derive(FromPrimitive)]
+    #[derive(FromPrimitive, PartialEq)]
     pub enum IfColor {
         Nop = 0,
         Always = 8,
@@ -22,19 +22,34 @@ pub mod cargo_bot_parse {
     impl Display for IfColor {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                IfColor::Always => write!(f, "a"),
+                IfColor::Always => write!(f, "q"),
                 IfColor::Blue => write!(f, "b"),
                 IfColor::Green => write!(f, "g"),
                 IfColor::Red => write!(f, "r"),
                 IfColor::Yellow => write!(f, "y"),
-                IfColor::Any => write!(f, "y"),
+                IfColor::Any => write!(f, "a"),
                 IfColor::None => write!(f, "n"),
-                IfColor::Nop => write!(f, "N"),
+                IfColor::Nop => write!(f, "q"),
             }
         }
     }
 
-    #[derive(FromPrimitive)]
+    impl PartialEq<Box> for IfColor {
+        fn eq(&self, other: &Box) -> bool {
+            match self {
+                IfColor::Nop => true,
+                IfColor::Always => true,
+                IfColor::Blue => other == &Box::Blue,
+                IfColor::Green => other == &Box::Green,
+                IfColor::Red => other == &Box::Red,
+                IfColor::Yellow => other == &Box::Yellow,
+                IfColor::Any => other != &Box::None,
+                IfColor::None => other == &Box::None,
+            }
+        }
+    }
+
+    #[derive(FromPrimitive, PartialEq)]
     pub enum OpCode {
         Nop = 0,
         Right = 1,
@@ -56,14 +71,14 @@ pub mod cargo_bot_parse {
                 OpCode::Goto2 => write!(f, "2"),
                 OpCode::Goto3 => write!(f, "3"),
                 OpCode::Goto4 => write!(f, "4"),
-                OpCode::Nop => write!(f, "\""),
+                OpCode::Nop => write!(f, " "),
             }
         }
     }
 
     #[derive(FromPrimitive, PartialEq, Clone, Copy)]
     pub enum Box {
-        None = 0,
+        None = 0, // important to be 0 for initialization
         Blue = 1,
         Green = 2,
         Red = 3,
@@ -144,7 +159,7 @@ pub mod cargo_bot_parse {
                     instructions[op] |= (((match chars[1] {
                         '>' => OpCode::Right,
                         '<' => OpCode::Left,
-                        'd' => OpCode::Down,
+                        '.' => OpCode::Down,
                         '1' => OpCode::Goto1,
                         '2' => OpCode::Goto2,
                         '3' => OpCode::Goto3,
@@ -182,7 +197,7 @@ pub mod cargo_bot_parse {
                             _ => Box::None,
                         } as u8)
                         .enumerate()
-                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 6))
+                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 3))
                 })
                 .collect();
             data[..WIDTH].clone_from_slice(&d[..WIDTH]);
@@ -203,10 +218,10 @@ pub mod cargo_bot_parse {
                             _ => Box::None,
                         } as u8)
                         .enumerate()
-                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 6))
+                        .fold(0u32, |last, (i, code)| last | (code as u32).shl(i * 3))
                 })
                 .collect();
-            
+
             finish_state[..WIDTH].clone_from_slice(&d[..WIDTH]);
 
             // let mut finish_state = Vec::new();
@@ -240,11 +255,43 @@ pub mod cargo_bot_parse {
             })
         }
 
+        pub fn brute_force(&mut self) {
+            // let inst = self.instructions[0];
+            let data = self.data;
+            println!("data: {:?}", data);
+            println!("self: {:?}", self);
+            let mut stdout = stdout();
+            // let op_code_list = [OpCode::Down, OpCode::Left, OpCode::Right, OpCode::Goto1];
+            for i in 0..u64::MAX << 4 {
+                if i % 1_000_000 == 0 {
+                    print!("\r{} registers", ((64 - i.leading_zeros()) / 6));
+                    stdout.flush().unwrap();
+                }
+                self.instructions[0] = i;
+                // if i == 1000 {
+                //     println!("def");
+                //     self.instructions[0] = inst;
+                //     println!("data: {:?}", data);
+                //     println!("self: {:?}", self);
+                // }
+                self.dp = 0;
+                self.ip = (0, 0);
+                self.data = data;
+                self.stack = Default::default();
+                self.crane = Box::None;
+                match self.run_all() {
+                    FinishState::Crashed(_) => {}
+                    FinishState::Finished(_) => return,
+                    FinishState::Limited(_) => {}
+                }
+            }
+        }
+
         pub fn run_all(&mut self) -> FinishState {
             let mut num_rounds = 0;
             loop {
                 num_rounds += 1;
-                if num_rounds == 65535 {
+                if num_rounds == 100 {
                     return FinishState::Limited(num_rounds);
                 }
                 match self.step() {
@@ -255,16 +302,23 @@ pub mod cargo_bot_parse {
             }
         }
 
-        fn get_top(stack: u32) -> usize {
-            (6 - stack.leading_zeros() / 3) as usize
+        fn get_top(stack: u32) -> i8 {
+            // println!("stack: {:0b}", stack);
+            // println!("leading zeros: {}", stack.leading_zeros());
+            // let top = (5 - ((stack.leading_zeros() - 14) / 3)) as usize;
+            // match 5u32.checked_sub((stack.leading_zeros() - 14) / 3) {
+            //     Some(i) => Some(i as usize),
+            //     None => None,
+            // }
+            5u32.wrapping_sub((stack.leading_zeros() - 14) / 3) as i8
         }
 
         pub fn step(&mut self) -> StepState {
-            let col = ((self.instructions[(self.ip.0) as usize] >> ((self.ip.1) * 6)) & 56) as u8;
-            if col == self.crane as u8
-                || col == IfColor::Always as u8
-                || (col == IfColor::Any as u8 && self.crane != Box::None)
-            {
+            let col = IfColor::from_u8(
+                ((self.instructions[(self.ip.0) as usize] >> ((self.ip.1) * 6)) & 56) as u8,
+            )
+            .unwrap();
+            if col == self.crane || (col == IfColor::Any && self.crane != Box::None) {
                 match FromPrimitive::from_u8(
                     ((self.instructions[(self.ip.0) as usize] >> ((self.ip.1) * 6)) & 7) as u8,
                 )
@@ -281,12 +335,22 @@ pub mod cargo_bot_parse {
                     OpCode::Down => {
                         // println!("going down");
                         self.ip.1 += 1;
+
                         let top = CbInterpret::<WIDTH>::get_top(self.data[self.dp as usize]);
-                        // TODO: this needs to be made more boosted!
-                        let temp = ((self.data[self.dp as usize] >> (top * 3)) & 0b111) as u8;
-                        self.data[self.dp as usize] &= u32::MAX ^ 0b111 << (top * 3);
-                        self.data[self.dp as usize] |= (self.crane as u32) << (top * 3);
-                        self.crane = FromPrimitive::from_u8(temp).unwrap();
+                        if self.crane == Box::None {
+                            self.crane =
+                                Box::from_u32((self.data[self.dp as usize] >> (top * 3)) & 0b111)
+                                    .unwrap();
+                            self.data[self.dp as usize] &= u32::MAX ^ (0b111 << (top * 3));
+                        // TODO: make one constant?
+                        } else {
+                            self.data[self.dp as usize] |= (self.crane as u32) << ((top + 1) * 3);
+                            self.crane = Box::None;
+                            if top > 6 {
+                                // TODO: check how many boxes can fit on a stack
+                                return StepState::Crashed;
+                            }
+                        }
                     }
                     OpCode::Goto1 => {
                         self.stack.push(self.ip);
@@ -312,11 +376,13 @@ pub mod cargo_bot_parse {
                         }
                     }
                 }
+            } else {
+                self.ip.1 += 1;
             }
             // test if finished by comparing each element of data to finish_state
             if self.data == self.finish_state {
                 StepState::Finished
-            } else if self.dp < self.data.len() as u8 {
+            } else if self.dp < WIDTH as u8 {
                 StepState::Normal
             } else {
                 StepState::Crashed
@@ -331,12 +397,31 @@ pub mod cargo_bot_parse {
             data = format!("{}{:?}", data, self.crane);
             data
         }
-
+        pub fn print_inst(&self) -> String {
+            let mut data: String = String::from(" ");
+            for row in 0..4 {
+                for i in 0..8 {
+                    let instr = (self.instructions[row] >> (i * 6)) & 0b111111;
+                    let color = IfColor::from_u64(instr & 56).unwrap();
+                    let op_code = OpCode::from_u64(instr & 7).unwrap();
+                    if op_code == OpCode::Nop {
+                        break;
+                    }
+                    data = format!("{}{}{}", data, color, op_code);
+                }
+                data = format!("{}, ", data);
+            }
+            data
+        }
         pub fn print_data(&mut self) -> String {
             let mut data: String = Default::default();
             for y in (0..6).rev() {
                 for x in 0..self.data.len() {
-                    // data = format!("{}|{}", data, self.data[x][y]);
+                    data = format!(
+                        "{}|{}",
+                        data,
+                        Box::from_u32(self.data[x] >> (y * 3) & 0b111).unwrap()
+                    );
                 }
                 data = format!("{}|\n", data);
             }
